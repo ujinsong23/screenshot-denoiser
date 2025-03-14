@@ -4,7 +4,7 @@ from tqdm import tqdm
 import argparse
 from scipy.ndimage import uniform_filter
 DATA_PATH = "../dataset"
-from utils import normalize, rgb2gray, compute_gradients, mse, psnr
+from utils import normalize, rgb2gray, compute_gradients, mse, psnr, sigmoid
 
 def bilateral_get_weight(i_range, j_range, i, j, p, gradient_magnitudes, sigma_s, sigma_r, sigma_o):
     patch = p[np.ix_(i_range, j_range)]
@@ -16,25 +16,8 @@ def bilateral_get_weight(i_range, j_range, i, j, p, gradient_magnitudes, sigma_s
         - ((j_range[None, :] - j)**2 / sigma_s**2)
     )
 
-    # w_orientation = np.exp(
-    #     - ((neighbor_gradient[:,:,0] - center_gradient[0])**2 / sigma_o**2)
-    #     - ((neighbor_gradient[:,:,1] - center_gradient[1])**2 / sigma_o**2)
-    # )
-
     orientation_distance = (np.linalg.norm(neighbor_gradient - center_gradient, axis=-1)**2)*np.linalg.norm(center_gradient)
     w_orientation = np.exp(-orientation_distance/sigma_o**2)
-
-    # def softmax(x):
-    #     exp_x = np.exp(x - np.max(x))
-    #     return exp_x / exp_x.sum()
-    # neighbor_gradient /= (np.linalg.norm(neighbor_gradient, axis=-1, keepdims=True)+1e-6)
-    # w_orientation = neighbor_gradient.dot(center_gradient.reshape(-1, 1)).squeeze()
-    # w_orientation = softmax(w_orientation)
-
-    # dot_product = np.sum(neighbor_gradient * center_gradient, axis=-1)
-    # norms = np.linalg.norm(neighbor_gradient, axis=-1) * np.linalg.norm(center_gradient)
-    # orientation_similarity /= norms
-
     return w, w_orientation, w*w_orientation
 
 def bilateral_filter(p, r, gradient_magnitudes, sigma_s, sigma_r, sigma_o):
@@ -51,24 +34,8 @@ def bilateral_filter(p, r, gradient_magnitudes, sigma_s, sigma_r, sigma_o):
     return q
 
 def adaptive_eps(variance, max_eps):
-    # normalized_variance = (variance - np.min(variance)) / (np.max(variance) - np.min(variance))
-    # adaptive_eps_map = max_eps-max_eps * normalized_variance
-
-
-    def sigmoid(x):
-        return 1 / (1 + np.exp(-x))
-    # norm_var = (variance - np.mean(variance)) / (np.std(variance) + 1e-12)
-    # sigmoid_var = sigmoid(norm_var/t)
-    # adaptive_eps_map = max_eps * (1 - sigmoid_var) 
     sigmoid_var = sigmoid((variance-0.010)/0.1)
     adaptive_eps_map = max_eps * (1 - sigmoid_var)
-
-    # def softmax(x):
-    #     exp_x = np.exp(x - np.max(x))
-    #     return exp_x / exp_x.sum()
-    # norm_var = (variance - np.mean(variance)) / (np.std(variance) + 1e-12)
-    # softmax_var = softmax(norm_var.flatten()/t).reshape(variance.shape)
-    # adaptive_eps_map = max_eps * (1 - softmax_var) 
     return adaptive_eps_map
 
 def guided_filter(I, p, r, eps):
@@ -84,7 +51,6 @@ def guided_filter(I, p, r, eps):
     adaptive_eps_map = adaptive_eps(var_I, eps)
     
     a = cov_Ip / (var_I + adaptive_eps_map)
-    # a = cov_Ip / (var_I + eps)
     b = mean_p - a * mean_I
     
     mean_a = uniform_filter(a, size=r)
@@ -95,21 +61,22 @@ def guided_filter(I, p, r, eps):
 
 
 if __name__ == "__main__":
-    # read arguments from command line
     parser = argparse.ArgumentParser()
-    parser.add_argument("--image_path", type=str)
+    parser.add_argument("--image_id", type=int, default=8)
     parser.add_argument("--sigma_r", type=float, default=0.3)
     parser.add_argument("--sigma_s", type=float, default=5)
     parser.add_argument("--sigma_o", type=float, default=0.1)
     parser.add_argument("--eps", type=float, default=2*1e-4)
     args = parser.parse_args()
 
-    sigma_r = 0.3
-    sigma_s = 5
-    sigma_o = 0.1
-    eps = 2*1e-4
+    sigma_r = args.sigma_r
+    sigma_s = args.sigma_s
+    sigma_o = args.sigma_o
+    eps = args.eps
+    image_id = args.image_id
+    print(f'Processing image {image_id}')
+    print(f'Hyperparameters: sigma_r={sigma_r}, sigma_s={sigma_s}, sigma_o={sigma_o}, eps={eps}')
 
-    image_id = 6
     clean = np.array(Image.open(f"{DATA_PATH}/original/{image_id:03d}.png"))[:, :, :3]
     noisy = np.array(Image.open(f"{DATA_PATH}/noised/{image_id:03d}.jpg"))
     clean = rgb2gray(normalize(clean))
